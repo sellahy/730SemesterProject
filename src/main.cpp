@@ -1,11 +1,17 @@
+#include <Arduino.h>
 #include <Wire.h>
+
+bool mooment(double Ax, double Ay, double Az);
+void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data);
+void Read_RawValue(uint8_t deviceAddress, uint8_t regAddress);
+void MPU6050_Init();
 
 // MPU6050 Slave Device Address
 const uint8_t MPU6050SlaveAddress = 0x68;
 
 // Select SDA and SCL pins for I2C communication
-const uint8_t scl = 5;
-const uint8_t sda = 4;
+const uint8_t scl = 22;
+const uint8_t sda = 21;
 
 // Acceleration scale as per the datasheet
 const uint16_t accscale = 16384;
@@ -23,16 +29,21 @@ const uint8_t MPU6050_REGISTER_INT_ENABLE = 0x38;
 const uint8_t MPU6050_REGISTER_ACCEL_XOUT_H = 0x3B;
 const uint8_t MPU6050_REGISTER_SIGNAL_PATH_RESET = 0x68;
 
+const double MOVEMENT_THRESHOLD = 1.0;
+const double DETECT_TOLERANCE = 0.8;
+const int RECORDINGS = 5;
+const int FRAMES = 15;
+
 int16_t AccelX, AccelY, AccelZ;
-double saves[45] = {0};
-double records[45];
+double saves[FRAMES * 3] = {0};
+double records[FRAMES * 3];
 int b = 0;
 int c = 0;
 int e = 0;
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Wire.begin(sda, scl);
   MPU6050_Init();
 }
@@ -44,7 +55,7 @@ void loop()
   if (c == 0)
   {
     Serial.println("What do you want to do? \n Record = 1 \n Detect = 2 \n Delete = 3");
-    delay(3000);
+    while (Serial.available() <= 0) {} // Do nothing
     if (Serial.available() > 0)
     {
       c = Serial.read();
@@ -56,16 +67,18 @@ void loop()
     c = Serial.read();
   }
   //Save a gesture
-  else if (c == 49)
+  else if (c == '1')
   {
-    if (b == 10)
+    if (b == RECORDINGS)
     {
       Serial.println("Gesture will be rewritten");
       b = 0;
     }
     if (e == 0)
     {
-      Serial.println("Enter Gesture 10 times");
+      Serial.print("Enter Gesture ");
+      Serial.print(RECORDINGS);
+      Serial.println(" times");
       e = 1;
     }
 
@@ -86,7 +99,7 @@ void loop()
     }
     Serial.print("Gesture no ");
     Serial.println(b);
-    for (i = 0; i < 15; i++)
+    for (i = 0; i < FRAMES; i++)
     {
       Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
       Ax = (double)AccelX / accscale + 0.03;
@@ -103,11 +116,11 @@ void loop()
       delay(30);
     }
     b++;
-    if (b == 10)
+    if (b == RECORDINGS)
     {
-      for (j = 0; j < 45; j++)
+      for (j = 0; j < FRAMES * 3; j++)
       {
-        saves[j] = saves[j] / 10;
+        saves[j] = saves[j] / RECORDINGS;
         //Serial.println(saves[j]);
       }
       c = 0;
@@ -116,14 +129,14 @@ void loop()
     }
   }
   //Detect a gesture
-  else if (c == 50)
+  else if (c == '2')
   {
     if (b == 0)
     {
       Serial.println("No gesture saved");
       c = 0;
     }
-    if (b == 10)
+    if (b == RECORDINGS)
     {
       if (e == 0)
       {
@@ -139,7 +152,7 @@ void loop()
         delay(10);
         return;
       }
-      for (i = 0; i < 15; i++)
+      for (i = 0; i < FRAMES; i++)
       {
         Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
         Ax = (double)AccelX / accscale + 0.03;
@@ -150,24 +163,24 @@ void loop()
         records[i * 3 + 2] = Az;
         delay(30);
       }
-      b = 8;
+      b = RECORDINGS + 2;
     }
-    if (b == 8)
+    if (b == RECORDINGS + 2)
     {
-      for (j = 0; j < 45; j++)
+      for (j = 0; j < FRAMES * 3; j++)
       {
         //        Serial.println("Recorded ");Serial.println(records[j]);
         //        Serial.println("Saved ");Serial.println(saves[j]);
         //        Serial.println("---------------");
 
-        //        Tolerance values are -0.30 to +0.30
-        if (!((records[j] <= saves[j] + 0.30) && (records[j] >= saves[j] - 0.30)))
+        //        Tolerance values are (originally) -0.30 to +0.30
+        if (!((records[j] <= saves[j] + DETECT_TOLERANCE) && (records[j] >= saves[j] - DETECT_TOLERANCE)))
         {
           d++;
         }
       }
       c = 0;
-      b = 10;
+      b = RECORDINGS;
       e = 0;
       if (d > 5)
       {
@@ -181,12 +194,12 @@ void loop()
     }
   }
   //Delete the gesture
-  else if (c == 51)
+  else if (c == '3')
   {
-    for (i = 0; i < 45; i++)
+    for (i = 0; i < FRAMES * 3; i++)
     {
       saves[i] = 0;
-      if (i == 44)
+      if (i == FRAMES - 1)
       {
         c = 0;
         b = 0;
@@ -208,9 +221,9 @@ void loop()
 bool mooment(double Ax, double Ay, double Az)
 {
   if ((Ax + Ay + Az) > 0.01)
-    return ((Ax + Ay + Az) > 0.1);
+    return ((Ax + Ay + Az) > MOVEMENT_THRESHOLD);
   else
-    return ((Ax + Ay + Az) < (-0.1));
+    return ((Ax + Ay + Az) < (-1 * MOVEMENT_THRESHOLD));
 }
 
 void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data)

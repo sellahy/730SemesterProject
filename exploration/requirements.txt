@@ -3,3 +3,6 @@ kagglehub
 
 polars
 matplotlib
+
+torch
+torchvision

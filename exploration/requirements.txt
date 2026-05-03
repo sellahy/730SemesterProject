@@ -6,3 +6,5 @@ matplotlib
 
 torch
 torchvision
+onnxscript
+onnxsim

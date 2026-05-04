@@ -1,263 +1,204 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <math.h>
 
-bool mooment(double Ax, double Ay, double Az);
-void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data);
-void Read_RawValue(uint8_t deviceAddress, uint8_t regAddress);
-void MPU6050_Init();
+extern "C" {
+  #include "model.h"
+}
 
-// MPU6050 Slave Device Address
-const uint8_t MPU6050SlaveAddress = 0x68;
+bool mooment(float, float, float);
+void read_imu_data(float &, float &, float &, float &, float &, float &);
 
-// Select SDA and SCL pins for I2C communication
-const uint8_t scl = 22;
-const uint8_t sda = 21;
+// I2C Address for LSM6DS3
+#define LSM6DS3_ADDR 0x6A
 
-// Acceleration scale as per the datasheet
-const uint16_t accscale = 16384;
+// 2. Define the static dimensions
+#define BATCH_SIZE 1
+#define SEQ_LEN 100
+#define FEATURES 6
+#define OUTPUT_CLASSES 8 
+#define MOVEMENT_THRESHOLD 7.0f // g-force above standard 1g gravity
 
-// MPU6050 configuration register addresses
-const uint8_t MPU6050_REGISTER_SMPLRT_DIV = 0x19;
-const uint8_t MPU6050_REGISTER_USER_CTRL = 0x6A;
-const uint8_t MPU6050_REGISTER_PWR_MGMT_1 = 0x6B;
-const uint8_t MPU6050_REGISTER_PWR_MGMT_2 = 0x6C;
-const uint8_t MPU6050_REGISTER_CONFIG = 0x1A;
-const uint8_t MPU6050_REGISTER_GYRO_CONFIG = 0x1B;
-const uint8_t MPU6050_REGISTER_ACCEL_CONFIG = 0x1C;
-const uint8_t MPU6050_REGISTER_FIFO_EN = 0x23;
-const uint8_t MPU6050_REGISTER_INT_ENABLE = 0x38;
-const uint8_t MPU6050_REGISTER_ACCEL_XOUT_H = 0x3B;
-const uint8_t MPU6050_REGISTER_SIGNAL_PATH_RESET = 0x68;
+const unsigned long COOLDOWN_MS = 1000; // 1 second ignore period after a gesture
+const float GRAVITY_ACCEL = 9.80665;
+const float GRYO_LIMIT = 4.3633;
+const unsigned long SAMPLE_INTERVAL_MS = 28; // 35Hz.
 
-const double MOVEMENT_THRESHOLD = 1.0;
-const double DETECT_TOLERANCE = 0.8;
-const int RECORDINGS = 5;
-const int FRAMES = 15;
+// --- State Machine Enums ---
+enum SystemState {
+    STATE_IDLE,
+    STATE_RECORDING,
+    STATE_COOLDOWN
+};
 
-int16_t AccelX, AccelY, AccelZ;
-double saves[FRAMES * 3] = {0};
-double records[FRAMES * 3];
-int b = 0;
-int c = 0;
-int e = 0;
+SystemState currentState;
+float input_tensor[BATCH_SIZE * SEQ_LEN * FEATURES];
+float output_tensor[BATCH_SIZE * OUTPUT_CLASSES];
+unsigned long last_sample_time;
 
-void setup()
-{
+int sample_count;
+unsigned long cooldown_start;
+
+void setup() {
+  Wire.begin(8, 9); // SDA, SCL for C3 Super Mini
+  delay(100);
+  currentState = STATE_IDLE;
+  sample_count = 0;
+  cooldown_start = 0;
+  last_sample_time = 0;
+
   Serial.begin(115200);
-  Wire.begin(sda, scl);
-  MPU6050_Init();
-}
+  while (!Serial);
 
-void loop()
-{
-  double Ax, Ay, Az;
-  int i, j, d = 0;
-  if (c == 0)
-  {
-    Serial.println("What do you want to do? \n Record = 1 \n Detect = 2 \n Delete = 3");
-    while (Serial.available() <= 0) {} // Do nothing
-    if (Serial.available() > 0)
-    {
-      c = Serial.read();
-    }
-  }
-  //Prevent CR, LF or empty serial ports
-  else if (c == 13 || c == 10 || c == -1)
-  {
-    c = Serial.read();
-  }
-  //Save a gesture
-  else if (c == '1')
-  {
-    if (b == RECORDINGS)
-    {
-      Serial.println("Gesture will be rewritten");
-      b = 0;
-    }
-    if (e == 0)
-    {
-      Serial.print("Enter Gesture ");
-      Serial.print(RECORDINGS);
-      Serial.println(" times");
-      e = 1;
-    }
-
-    Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
-    Ax = (double)AccelX / accscale + 0.03;
-    Ay = (double)AccelY / accscale - 0.00;
-    Az = (double)AccelZ / accscale - 1.02;
-    //Adjust the values by stabilizing the device, modify the values as per your calibration requirements. 
-    //The values above were used by me, you can use the same or any other value as per your base state.
-    // Ax = (double)AccelX / accscale;
-    // Ay = (double)AccelY / accscale;
-    // Az = (double)AccelZ / accscale;
-    //Look for movement
-    if (!mooment(Ax, Ay, Az))
-    {
-      delay(10);
-      return;
-    }
-    Serial.print("Gesture no ");
-    Serial.println(b);
-    for (i = 0; i < FRAMES; i++)
-    {
-      Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
-      Ax = (double)AccelX / accscale + 0.03;
-      Ay = (double)AccelY / accscale - 0.00;
-      Az = (double)AccelZ / accscale - 1.02;
-      saves[i * 3 + 0] = saves[i * 3 + 0] + Ax;
-      saves[i * 3 + 1] = saves[i * 3 + 1] + Ay;
-      saves[i * 3 + 2] = saves[i * 3 + 2] + Az;
-      //      Serial.print(saves[i * 3 + 0]);
-      //      Serial.print("\t");
-      //      Serial.print(saves[i * 3 + 1]);
-      //      Serial.print("\t");
-      //      Serial.println(saves[i * 3 + 2]);
-      delay(30);
-    }
-    b++;
-    if (b == RECORDINGS)
-    {
-      for (j = 0; j < FRAMES * 3; j++)
-      {
-        saves[j] = saves[j] / RECORDINGS;
-        //Serial.println(saves[j]);
-      }
-      c = 0;
-      e = 0;
-      Serial.println("Finished Recording");
-    }
-  }
-  //Detect a gesture
-  else if (c == '2')
-  {
-    if (b == 0)
-    {
-      Serial.println("No gesture saved");
-      c = 0;
-    }
-    if (b == RECORDINGS)
-    {
-      if (e == 0)
-      {
-        Serial.println("Enter recorded gesture");
-        e = 1;
-      }
-      Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
-      Ax = (double)AccelX / accscale + 0.03;
-      Ay = (double)AccelY / accscale - 0.00;
-      Az = (double)AccelZ / accscale - 1.02;
-      if (!mooment(Ax, Ay, Az))
-      {
-        delay(10);
-        return;
-      }
-      for (i = 0; i < FRAMES; i++)
-      {
-        Read_RawValue(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_XOUT_H);
-        Ax = (double)AccelX / accscale + 0.03;
-        Ay = (double)AccelY / accscale - 0.00;
-        Az = (double)AccelZ / accscale - 1.02;
-        records[i * 3 + 0] = Ax;
-        records[i * 3 + 1] = Ay;
-        records[i * 3 + 2] = Az;
-        delay(30);
-      }
-      b = RECORDINGS + 2;
-    }
-    if (b == RECORDINGS + 2)
-    {
-      for (j = 0; j < FRAMES * 3; j++)
-      {
-        //        Serial.println("Recorded ");Serial.println(records[j]);
-        //        Serial.println("Saved ");Serial.println(saves[j]);
-        //        Serial.println("---------------");
-
-        //        Tolerance values are (originally) -0.30 to +0.30
-        if (!((records[j] <= saves[j] + DETECT_TOLERANCE) && (records[j] >= saves[j] - DETECT_TOLERANCE)))
-        {
-          d++;
-        }
-      }
-      c = 0;
-      b = RECORDINGS;
-      e = 0;
-      if (d > 5)
-      {
-        Serial.println("Wrong gesture");
-      }
-      else
-      {
-        Serial.println("Correct gesture");
-        //Put the resources or functions that you want to implement on successful gesture recognition
-      }
-    }
-  }
-  //Delete the gesture
-  else if (c == '3')
-  {
-    for (i = 0; i < FRAMES * 3; i++)
-    {
-      saves[i] = 0;
-      if (i == FRAMES - 1)
-      {
-        c = 0;
-        b = 0;
-      }
-    }
-    Serial.println("Gesture Removed");
-  }
-  //If unsupported values are passed to the serial
-  else
-  {
-    Serial.println("Incorrect input");
-    c = 0;
-  }
-  delay(10);
-}
-
-
-//Function to detect motion
-bool mooment(double Ax, double Ay, double Az)
-{
-  if ((Ax + Ay + Az) > 0.01)
-    return ((Ax + Ay + Az) > MOVEMENT_THRESHOLD);
-  else
-    return ((Ax + Ay + Az) < (-1 * MOVEMENT_THRESHOLD));
-}
-
-void I2C_Write(uint8_t deviceAddress, uint8_t regAddress, uint8_t data)
-{
-  Wire.beginTransmission(deviceAddress);
-  Wire.write(regAddress);
-  Wire.write(data);
+  // Initialize accelerometer (CTRL1_XL register)
+  Wire.beginTransmission(LSM6DS3_ADDR);
+  Wire.write(0x10); // CTRL1_XL
+  Wire.write(0x30); // 1.66 kHz, +/- 2g
   Wire.endTransmission();
-}
 
-// read raw values from registers
-void Read_RawValue(uint8_t deviceAddress, uint8_t regAddress)
-{
-  Wire.beginTransmission(deviceAddress);
-  Wire.write(regAddress);
+  // Initialize gyroscope (CTRL2_G register)
+  Wire.beginTransmission(LSM6DS3_ADDR);
+  Wire.write(0x11); // CTRL1_XL
+  Wire.write(0x30); // 1.66 kHz, +/- 250 dps
   Wire.endTransmission();
-  Wire.requestFrom(deviceAddress, (uint8_t)14);
-  AccelX = (((int16_t)Wire.read() << 8) | Wire.read());
-  AccelY = (((int16_t)Wire.read() << 8) | Wire.read());
-  AccelZ = (((int16_t)Wire.read() << 8) | Wire.read());
+
+  memset(input_tensor, 0, sizeof(input_tensor));
 }
 
-//configure MPU6050
-void MPU6050_Init()
-{
-  delay(150);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SMPLRT_DIV, 0x07);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_1, 0x01);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_PWR_MGMT_2, 0x00);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_CONFIG, 0x00);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_GYRO_CONFIG, 0x00);  //set +/-250 degree/second full scale
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_ACCEL_CONFIG, 0x00); // set +/- 2g full scale
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_FIFO_EN, 0x00);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_INT_ENABLE, 0x01);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_SIGNAL_PATH_RESET, 0x00);
-  I2C_Write(MPU6050SlaveAddress, MPU6050_REGISTER_USER_CTRL, 0x00);
+void loop() {
+    unsigned long current_time = millis();
+
+    // 2. Check if enough time has passed since the last reading
+    if (current_time - last_sample_time >= SAMPLE_INTERVAL_MS) {
+      // 3. Reset the timer. 
+      // We add the interval to the last time rather than setting it to current_time 
+      // to prevent drift over time.
+      last_sample_time = millis();
+
+      // 1. Read IMU (Replace with your actual IMU read functions)
+      float ax, ay, az, gx, gy, gz;
+      read_imu_data(ax, ay, az, gx, gy, gz);
+
+      // 2. State Machine Logic
+      switch (currentState) {
+          
+          case STATE_IDLE: {
+            if (mooment(ax, ay, az)) {
+              Serial.println("Motion detected! Recording gesture...");
+              currentState = STATE_RECORDING;
+              sample_count = 0;
+            }
+            break;
+          }
+
+          case STATE_RECORDING: {
+            // Append data to the flat buffer
+            int base_index = sample_count * FEATURES;
+            input_tensor[base_index + 0] = ax;
+            input_tensor[base_index + 1] = ay;
+            input_tensor[base_index + 2] = az;
+            input_tensor[base_index + 3] = gx;
+            input_tensor[base_index + 4] = gy;
+            input_tensor[base_index + 5] = gz;
+
+            sample_count++;
+
+            // If buffer is full, run inference!
+            if (sample_count >= SEQ_LEN) {
+              Serial.println("Buffer full. Running model...");
+              
+              unsigned long start_time = millis();
+              entry(input_tensor, output_tensor); // Call ONNX2C model
+              
+              Serial.print("Inference time (ms): ");
+              Serial.println(millis() - start_time);
+
+              // TODO: Find the max value in output_tensor to get the class ID
+              Serial.print("Predictions: ");
+              // for (int i = 0; i < OUTPUT_CLASSES; i++) {
+              //     Serial.print(output_tensor[i], 4); 
+              //     Serial.print(" ");
+              // }
+              int max_ind = std::distance(output_tensor, std::max_element(output_tensor, output_tensor + BATCH_SIZE * OUTPUT_CLASSES));
+              switch (max_ind) {
+                case 0:
+                  Serial.println("STATIC");
+                  break;
+                case 1:
+                  Serial.println("SLIDE_UP");
+                  break;
+                case 2:
+                  Serial.println("SLIDE_DOWN");
+                  break;
+                case 3:
+                  Serial.println("SLIDE_LEFT");
+                  break;
+                case 4:
+                  Serial.println("SLIDE_RIGHT");
+                  break;
+                case 5:
+                  Serial.println("RELEASE");
+                  break;
+                case 6:
+                  Serial.println("GRASP");
+                  break;
+                case 7:
+                  Serial.println("NONE");
+                  break;
+              }
+              
+              // Switch to cooldown so we don't immediately trigger again
+              currentState = STATE_COOLDOWN;
+              cooldown_start = millis();
+            }
+            break;
+          }
+          
+          case STATE_COOLDOWN: {
+            // Ignore all IMU data until cooldown expires
+              if (millis() - cooldown_start > COOLDOWN_MS) {
+                Serial.println("Cooldown finished. Ready for next gesture.");
+                currentState = STATE_IDLE;
+              }
+              break;
+          }
+      }
+    }
+}
+
+bool mooment(float ax, float ay, float az) {
+  float magnitude = sqrt((ax * ax) + (ay * ax) + (az * ax));
+  //Serial.println(magnitude);
+  float dynamic_accel = abs(magnitude - GRAVITY_ACCEL); // Remove 1g of gravity
+  
+  if ((dynamic_accel > MOVEMENT_THRESHOLD)) {
+    Serial.print("Dynamic accel: ");
+    Serial.println(dynamic_accel);
+  }
+  return (dynamic_accel > MOVEMENT_THRESHOLD);
+}
+
+void read_imu_data(float &ax, float &ay, float &az, float &gx, float &gy, float &gz) {
+  Wire.beginTransmission(LSM6DS3_ADDR);
+  Wire.write(0x22); // Start reading from OUTX_L_G
+  Wire.endTransmission();
+  Wire.requestFrom(LSM6DS3_ADDR, 12);
+
+  int16_t rawGx = Wire.read() | (Wire.read() << 8);
+  int16_t rawGy = Wire.read() | (Wire.read() << 8);
+  int16_t rawGz = Wire.read() | (Wire.read() << 8);
+  int16_t rawAx = Wire.read() | (Wire.read() << 8);
+  int16_t rawAy = Wire.read() | (Wire.read() << 8);
+  int16_t rawAz = Wire.read() | (Wire.read() << 8);
+
+  ax = ((float)rawAx * 0.061f / 1000.0f) * GRAVITY_ACCEL;
+  ay = ((float)rawAy * 0.061f / 1000.0f) * GRAVITY_ACCEL;
+  az = ((float)rawAz * 0.061f / 1000.0f) * GRAVITY_ACCEL;
+
+  gx = constrain(((float)rawGx * 8.75f / 1000.0f) * (M_PI / 180.0), -GRYO_LIMIT, GRYO_LIMIT);
+  gy = constrain(((float)rawGy * 8.75f / 1000.0f) * (M_PI / 180.0), -GRYO_LIMIT, GRYO_LIMIT);
+  gz = constrain(((float)rawGz * 8.75f / 1000.0f) * (M_PI / 180.0), -GRYO_LIMIT, GRYO_LIMIT);
+  // gx = ((float)rawGx * 8.75f / 1000.0f) * (M_PI / 180.0);
+  // gy = ((float)rawGy * 8.75f / 1000.0f) * (M_PI / 180.0);
+  // gz = ((float)rawGz * 8.75f / 1000.0f) * (M_PI / 180.0);
 }

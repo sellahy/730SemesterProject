@@ -10,3 +10,4 @@ onnxscript
 onnxsim
 
 pyserial
+numpy

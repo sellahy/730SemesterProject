@@ -10,6 +10,7 @@
 bool mooment(float, float, float);
 void read_imu_data(float &, float &, float &, float &, float &, float &);
 void performMediaAction(int);
+void typeStringSafely(const char*);
 
 #define LSM6DS3_ADDR 0x6A
 
@@ -187,8 +188,11 @@ void loop() {
               if (best_error <= MAX_MATCH_ERROR) {
                   switch (best_class) {
                     case 0: Serial.println("--> TAP"); break;
-                    //case 1: Serial.println("--> CIRCLE_LEFT"); break;
-                    case 1: Serial.println("--> CIRCLE_RIGHT"); break;
+                    case 1: Serial.println("--> CRANK_RIGHT"); break;
+                    case 2: Serial.println("--> CRANK_LEFT"); break;
+                    case 3: Serial.println("--> SWIPE_LEFT"); break;
+                    case 4: Serial.println("--> SWIPE_RIGHT"); break;
+                    case 5: Serial.println("--> CIRCLE_RIGHT"); break;
                   }
                   performMediaAction(best_class);
               } else {
@@ -226,16 +230,47 @@ void performMediaAction(int gestureClass) {
       Serial.println("Action: Play/Pause");
       bleKeyboard.write(KEY_MEDIA_PLAY_PAUSE);
       break;
-
-    // case 1:
-    //   Serial.println("Action: Previous Track");
-    //   bleKeyboard.write(KEY_MEDIA_PREVIOUS_TRACK);
-    //   break;
-
+    
     case 1:
+      Serial.println("Action: Volume Up");
+      bleKeyboard.write(KEY_MEDIA_VOLUME_UP);
+      break;
+
+    case 2:
+      Serial.println("Action: Volume Down");
+      bleKeyboard.write(KEY_MEDIA_VOLUME_DOWN);
+      break;
+    
+    case 3:
+      Serial.println("Action: Previous Track");
+      bleKeyboard.write(KEY_MEDIA_PREVIOUS_TRACK);
+      break;
+    
+    case 4:
       Serial.println("Action: Next Track");
       bleKeyboard.write(KEY_MEDIA_NEXT_TRACK);
       break;
+    
+    case 5:
+      Serial.println("Action: Visit Site");
+      // 1. Press Windows Key + R to open the "Run" dialog
+      bleKeyboard.press(KEY_LEFT_GUI);
+      delay(50);
+      bleKeyboard.releaseAll();
+      delay(300); // Give Windows time to open the dialog box
+      
+      // 2. Type the URL
+      typeStringSafely("www.youtube.com/watch?v=LqvPVwPcBp0&autoplay=1");
+      delay(500);
+      
+      // 3. Hit Enter to launch the browser
+      bleKeyboard.write(KEY_RETURN);
+      break;
+
+    // case 3:
+    //   Serial.println("Action: Next Track");
+    //   bleKeyboard.write(KEY_MEDIA_NEXT_TRACK);
+    //   break;
     
     // case 3:
     //   Serial.println("Action: Volume Up");
@@ -250,6 +285,17 @@ void performMediaAction(int gestureClass) {
     default:
       Serial.println("No media action for this gesture.");
       break;
+  }
+}
+
+// Types a string slowly to prevent BLE buffer overflows
+void typeStringSafely(const char* text) {
+  for (int i = 0; i < strlen(text); i++) {
+    bleKeyboard.print(text[i]);
+    
+    // Give the BLE radio 20ms to transmit the packet and clear the buffer.
+    // This perfectly mimics a human typing at roughly 100 WPM!
+    delay(20); 
   }
 }
 

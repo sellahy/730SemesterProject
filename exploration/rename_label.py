@@ -2,8 +2,8 @@ import os
 import glob
 
 # --- CONFIGURATION ---
-OLD_LABEL = 2     # The gesture ID you want to change
-NEW_LABEL = 1     # What you want to change it to
+OLD_LABEL = 3     # The gesture ID you want to change
+NEW_LABEL = 5     # What you want to change it to
 LABEL_DIR = "gesture_label"
 # ---------------------
 

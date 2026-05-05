@@ -1,7 +1,7 @@
 import serial
 import time
 
-PORT = '/dev/ttyACM1' # Change this to your port!
+PORT = '/dev/ttyACM0' # Change this to your port!
 BAUD = 115200
 
 def start_listening():

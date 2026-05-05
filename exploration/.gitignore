@@ -1,0 +1,8 @@
+imenv/
+imu_data/
+gesture_data/
+gesture_label/
+model/
+archive/
+
+*.zip

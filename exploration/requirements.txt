@@ -1,0 +1,13 @@
+jupyter
+kagglehub
+
+polars
+matplotlib
+
+torch
+torchvision
+onnxscript
+onnxsim
+
+pyserial
+numpy

@@ -14,7 +14,7 @@ void read_imu_data(float &, float &, float &, float &, float &, float &);
 
 // --- DATA COLLECTION CONFIGURATION ---
 const bool TRAINING = true;        // Set to false to run the AI model
-const int CURRENT_GESTURE = 0;     // Change this before resetting the board for a new gesture
+const int CURRENT_GESTURE = 2;     // Change this before resetting the board for a new gesture
 
 #define BATCH_SIZE 1
 #define SEQ_LEN 100

@@ -8,7 +8,7 @@ LABEL_DIR = "gesture_label"
 OUTPUT_FILE = "gesture_templates.h"
 
 # 8 classes, 100 steps, 6 features
-NUM_CLASSES = 2
+NUM_CLASSES = 6
 SEQ_LEN = 100
 FEATURES = 6
 

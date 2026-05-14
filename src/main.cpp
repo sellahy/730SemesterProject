@@ -4,7 +4,6 @@
 #include <BleKeyboard.h>
 #include <BLEDevice.h> 
 #include <BLESecurity.h>
-//#include <nvs_flash.h>
 #include "gesture_templates.h"
 
 bool mooment(float, float, float);
@@ -13,15 +12,11 @@ void performMediaAction(int);
 void typeStringSafely(const char*);
 
 #define LSM6DS3_ADDR 0x6A
-
 #define SEQ_LEN 100
 #define FEATURES 6
 #define MOVEMENT_THRESHOLD 5.0f 
 #define PRE_RECORD_STEPS 20
 
-// --- NEW CONFIGURATION ---
-// The maximum total error allowed before the device says "Unknown Gesture"
-// You will need to tune this number based on your Serial Monitor output!
 const float MAX_MATCH_ERROR = 2000.0f; 
 
 const unsigned long COOLDOWN_MS = 1000; 
@@ -33,9 +28,9 @@ const int SDA_PIN = 8;
 const int SCL_PIN = 9;
 
 enum SystemState {
-    STATE_IDLE,
-    STATE_RECORDING,
-    STATE_COOLDOWN
+  STATE_IDLE,
+  STATE_RECORDING,
+  STATE_COOLDOWN
 };
 
 SystemState currentState;
@@ -77,22 +72,14 @@ void setup() {
   Serial.println("==== TEMPLATE MATCHING MODE ENABLED ====");
   last_sample_time = millis();
 
-//   esp_err_t ret = nvs_flash_init();
-//   if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-//     ESP_ERROR_CHECK(nvs_flash_erase());
-//     ret = nvs_flash_init();
-//   }
-
   bleKeyboard.begin();
 
   BLESecurity *pSecurity = new BLESecurity();
   
   // Set authentication mode to bond without Man-In-The-Middle (MITM) protection
   pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
-  
-  // CRITICAL: Tell the OS this device has no screen or keyboard for a PIN
+  // Tell the OS this device has no screen or keyboard for a PIN
   pSecurity->setCapability(ESP_IO_CAP_NONE);
-  
   // Set the encryption key requirements
   pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
 
@@ -111,108 +98,105 @@ void loop() {
 
       switch (currentState) {
           
-          case STATE_IDLE: {
-            // Store RAW data in the ring buffer
-            float raw_vals[6] = {ax, ay, az, gx, gy, gz};
+        case STATE_IDLE: {
+          // Store RAW data in the ring buffer
+          float raw_vals[6] = {ax, ay, az, gx, gy, gz};
 
-            for(int i = 0; i < FEATURES; i++) {
-                ring_buffer[(ring_index * FEATURES) + i] = raw_vals[i];
-            }
-            
-            ring_index++;
-            if (ring_index >= PRE_RECORD_STEPS) {
-                ring_index = 0;
-                ring_full = true; 
-            }
-
-            if (mooment(ax, ay, az)) {
-              int steps_to_copy = ring_full ? PRE_RECORD_STEPS : ring_index;
-              int start_idx = ring_full ? ring_index : 0; 
-              
-              for (int i = 0; i < steps_to_copy; i++) {
-                  int src_idx = ((start_idx + i) % PRE_RECORD_STEPS) * FEATURES;
-                  int dst_idx = i * FEATURES;
-                  for(int f = 0; f < FEATURES; f++) {
-                      input_tensor[dst_idx + f] = ring_buffer[src_idx + f];
-                  }
-              }
-              sample_count = steps_to_copy; 
-              currentState = STATE_RECORDING;
-            }
-            break;
-          }
-
-          case STATE_RECORDING: {
-            int base_index = sample_count * FEATURES;
-            
-            // Store RAW data
-            input_tensor[base_index + 0] = ax;
-            input_tensor[base_index + 1] = ay;
-            input_tensor[base_index + 2] = az;
-            input_tensor[base_index + 3] = gx;
-            input_tensor[base_index + 4] = gy;
-            input_tensor[base_index + 5] = gz;
-
-            sample_count++;
-
-            if (sample_count >= SEQ_LEN) {
-              
-              // === TEMPLATE MATCHING ALGORITHM ===
-              float best_error = 999999.0f;
-              int best_class = -1;
-
-              // Compare the recorded input_tensor against every class template
-              for (int c = 0; c < NUM_CLASSES; c++) {
-                  float current_error = 0.0f;
-                  
-                  // Calculate Sum of Absolute Differences (SAD)
-                  for (int i = 0; i < TEMPLATE_SIZE; i++) {
-                      current_error += abs(input_tensor[i] - GESTURE_TEMPLATES[c][i]);
-                  }
-
-                  // Optional: Print errors to help tune MAX_MATCH_ERROR
-                  // Serial.print("Class "); Serial.print(c); Serial.print(" Error: "); Serial.println(current_error);
-
-                  if (current_error < best_error) {
-                      best_error = current_error;
-                      best_class = c;
-                  }
-              }
-
-              Serial.print("Best Match: Class "); 
-              Serial.print(best_class);
-              Serial.print(" | Error Score: ");
-              Serial.println(best_error);
-
-              // Check if the best match is actually close enough, or just random noise
-              if (best_error <= MAX_MATCH_ERROR) {
-                  switch (best_class) {
-                    case 0: Serial.println("--> TAP"); break;
-                    case 1: Serial.println("--> CRANK_RIGHT"); break;
-                    case 2: Serial.println("--> CRANK_LEFT"); break;
-                    case 3: Serial.println("--> SWIPE_LEFT"); break;
-                    case 4: Serial.println("--> SWIPE_RIGHT"); break;
-                    case 5: Serial.println("--> CIRCLE_RIGHT"); break;
-                  }
-                  performMediaAction(best_class);
-              } else {
-                  Serial.println("--> UNKNOWN GESTURE (Error too high)");
-              }
-              
-              currentState = STATE_COOLDOWN;
-              cooldown_start = millis();
-            }
-            break;
+          for(int i = 0; i < FEATURES; i++) {
+            ring_buffer[(ring_index * FEATURES) + i] = raw_vals[i];
           }
           
-          case STATE_COOLDOWN: {
-              if (millis() - cooldown_start > COOLDOWN_MS) {
-                ring_index = 0;
-                ring_full = false; 
-                currentState = STATE_IDLE;
-              }
-              break;
+          ring_index++;
+          if (ring_index >= PRE_RECORD_STEPS) {
+            ring_index = 0;
+            ring_full = true;
           }
+
+          if (mooment(ax, ay, az)) {
+            int steps_to_copy = ring_full ? PRE_RECORD_STEPS : ring_index;
+            int start_idx = ring_full ? ring_index : 0; 
+            
+            for (int i = 0; i < steps_to_copy; i++) {
+              int src_idx = ((start_idx + i) % PRE_RECORD_STEPS) * FEATURES;
+              int dst_idx = i * FEATURES;
+              for(int f = 0; f < FEATURES; f++) {
+                  input_tensor[dst_idx + f] = ring_buffer[src_idx + f];
+              }
+            }
+            sample_count = steps_to_copy; 
+            currentState = STATE_RECORDING;
+          }
+          break;
+        }
+
+        case STATE_RECORDING: {
+          int base_index = sample_count * FEATURES;
+          
+          // Store RAW data
+          input_tensor[base_index + 0] = ax;
+          input_tensor[base_index + 1] = ay;
+          input_tensor[base_index + 2] = az;
+          input_tensor[base_index + 3] = gx;
+          input_tensor[base_index + 4] = gy;
+          input_tensor[base_index + 5] = gz;
+
+          sample_count++;
+
+          if (sample_count >= SEQ_LEN) {
+            
+            // === TEMPLATE MATCHING ALGORITHM ===
+            float best_error = 999999.0f;
+            int best_class = -1;
+
+            // Compare the recorded input_tensor against every class template
+            for (int c = 0; c < NUM_CLASSES; c++) {
+              float current_error = 0.0f;
+              
+              // Calculate Sum of Absolute Differences (SAD)
+              for (int i = 0; i < TEMPLATE_SIZE; i++) {
+                current_error += abs(input_tensor[i] - GESTURE_TEMPLATES[c][i]);
+              }
+
+              if (current_error < best_error) {
+                best_error = current_error;
+                best_class = c;
+              }
+            }
+
+            Serial.print("Best Match: Class "); 
+            Serial.print(best_class);
+            Serial.print(" | Error Score: ");
+            Serial.println(best_error);
+
+            // Check if the best match is actually close enough, or just random noise
+            if (best_error <= MAX_MATCH_ERROR) {
+              switch (best_class) {
+                case 0: Serial.println("--> TAP"); break;
+                case 1: Serial.println("--> CRANK_RIGHT"); break;
+                case 2: Serial.println("--> CRANK_LEFT"); break;
+                case 3: Serial.println("--> SWIPE_LEFT"); break;
+                case 4: Serial.println("--> SWIPE_RIGHT"); break;
+                case 5: Serial.println("--> CIRCLE_RIGHT"); break;
+              }
+              performMediaAction(best_class);
+            } else {
+              Serial.println("--> UNKNOWN GESTURE (Error too high)");
+            }
+            
+            currentState = STATE_COOLDOWN;
+            cooldown_start = millis();
+          }
+          break;
+        }
+          
+        case STATE_COOLDOWN: {
+          if (millis() - cooldown_start > COOLDOWN_MS) {
+            ring_index = 0;
+            ring_full = false; 
+            currentState = STATE_IDLE;
+          }
+          break;
+        }
       }
     }
 
@@ -267,21 +251,6 @@ void performMediaAction(int gestureClass) {
       bleKeyboard.write(KEY_RETURN);
       break;
 
-    // case 3:
-    //   Serial.println("Action: Next Track");
-    //   bleKeyboard.write(KEY_MEDIA_NEXT_TRACK);
-    //   break;
-    
-    // case 3:
-    //   Serial.println("Action: Volume Up");
-    //   bleKeyboard.write(KEY_MEDIA_VOLUME_UP);
-    //   break;
-
-    // case 4:
-    //   Serial.println("Action: Volume Down");
-    //   bleKeyboard.write(KEY_MEDIA_VOLUME_DOWN);
-    //   break;
-
     default:
       Serial.println("No media action for this gesture.");
       break;
@@ -294,7 +263,6 @@ void typeStringSafely(const char* text) {
     bleKeyboard.print(text[i]);
     
     // Give the BLE radio 20ms to transmit the packet and clear the buffer.
-    // This perfectly mimics a human typing at roughly 100 WPM!
     delay(20); 
   }
 }

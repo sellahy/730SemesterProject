@@ -4,6 +4,9 @@ import time
 PORT = '/dev/ttyACM0' # Change this to your port!
 BAUD = 115200
 
+data_folder = "./gesture_data"
+label_folder = "./gesture_label"
+
 def start_listening():
     recording = False
     file = None
@@ -36,7 +39,7 @@ def start_listening():
                         if line == "=== START DATA CSV ===":
                             # Lock in the timestamp for this specific gesture recording
                             current_timestamp = int(time.time()) 
-                            filename = f"gesture_data/gesture_data_{current_timestamp}.csv"
+                            filename = f"{data_folder}/gesture_data_{current_timestamp}.csv"
                             file = open(filename, "w")
                             recording = True
                             print(f"\n[Saving to {filename}...]")
@@ -52,7 +55,7 @@ def start_listening():
                         # --- Handle LABEL CSV ---
                         if line == "=== START LABEL CSV ===":
                             # Uses the exact same timestamp so the files match!
-                            filename = f"gesture_label/gesture_label_{current_timestamp}.csv"
+                            filename = f"{label_folder}/gesture_label_{current_timestamp}.csv"
                             file = open(filename, "w")
                             recording = True
                             print(f"\n[Saving to {filename}...]")

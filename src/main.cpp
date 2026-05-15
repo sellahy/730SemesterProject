@@ -87,22 +87,39 @@ void setup() {
   memset(input_tensor, 0, sizeof(input_tensor));
   memset(ring_buffer, 0, sizeof(ring_buffer));
   
-  Serial.println("==== TEMPLATE MATCHING MODE ENABLED ====");
+  
   last_sample_time = millis();
 
-  bleKeyboard.begin();
+  switch (programState) {
+    case RECORDING: {
+      Serial.println("==== RECORDING MODE ENABLED ====");
+      Serial.print("Recording gesture ID: ");
+      Serial.println(CURRENT_GESTURE);
+      break;
+    }
 
-  BLESecurity *pSecurity = new BLESecurity();
-  
-  // Set authentication mode to bond without Man-In-The-Middle (MITM) protection
-  pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
-  // Tell the OS this device has no screen or keyboard for a PIN
-  pSecurity->setCapability(ESP_IO_CAP_NONE);
-  // Set the encryption key requirements
-  pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+    case AVG_INFERENCE: {
+      Serial.println("==== TEMPLATE MATCHING MODE ENABLED ====");
 
-  Serial.println("BLE HID Ready");
-  Serial.println("Pair with: ESP32-Gesture-Ring");
+      bleKeyboard.begin();
+      BLESecurity *pSecurity = new BLESecurity();
+      // Set authentication mode to bond without Man-In-The-Middle (MITM) protection
+      pSecurity->setAuthenticationMode(ESP_LE_AUTH_BOND);
+      // Tell the OS this device has no screen or keyboard for a PIN
+      pSecurity->setCapability(ESP_IO_CAP_NONE);
+      // Set the encryption key requirements
+      pSecurity->setInitEncryptionKey(ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK);
+
+      Serial.println("BLE HID Ready");
+      Serial.println("Pair with: ESP32-Gesture-Ring");
+      break;
+    }
+
+    case LSTM_INFERENCE: {
+      Serial.println("==== MODEL INFERENCE MODE ENABLED ====");
+      break;
+    }
+  }
 }
 
 void loop() {

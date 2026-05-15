@@ -5,9 +5,13 @@
 #include <BLEDevice.h> 
 #include <BLESecurity.h>
 #include "gesture_templates.h"
+#include "gesture_detect_avg.h"
+#include "gesture_detect_lstm.h"
 
 bool mooment(float, float, float);
 void read_imu_data(float &, float &, float &, float &, float &, float &);
+void csv_print();
+void printResults(int);
 void performMediaAction(int);
 void typeStringSafely(const char*);
 
@@ -17,12 +21,25 @@ void typeStringSafely(const char*);
 #define MOVEMENT_THRESHOLD 5.0f 
 #define PRE_RECORD_STEPS 20
 
-const float MAX_MATCH_ERROR = 2000.0f; 
+enum InferenceState {
+  RECORDING,
+  AVG_INFERENCE,
+  LSTM_INFERENCE
+};
 
+// --- DATA COLLECTION CONFIGURATION ---
+const InferenceState programState = AVG_INFERENCE;
+const int CURRENT_GESTURE = 2;     // Change this before resetting the board for a new gesture
+
+const float MAX_MATCH_ERROR = 2000.0f; 
 const unsigned long COOLDOWN_MS = 1000; 
 const float GRAVITY_ACCEL = 9.80665;
 const float GRYO_LIMIT = 4.3633;
-const unsigned long SAMPLE_INTERVAL_MS = 28; 
+const unsigned long SAMPLE_INTERVAL_MS = 28;
+
+// To be updated when model is trained on new data
+const float MEANS[6] = {-0.7395, 4.8429, 3.3637, 0.0850, 0.0463, 0.0117};
+const float STDS[6]  = {5.7835, 3.3225, 4.3546, 0.7242, 0.9477, 0.5873};
 
 const int SDA_PIN = 8;
 const int SCL_PIN = 9;
@@ -35,6 +52,7 @@ enum SystemState {
 
 SystemState currentState;
 float input_tensor[SEQ_LEN * FEATURES];
+float output_tensor[NUM_CLASSES];
 unsigned long last_sample_time;
 
 int sample_count;
@@ -143,44 +161,27 @@ void loop() {
           sample_count++;
 
           if (sample_count >= SEQ_LEN) {
-            
-            // === TEMPLATE MATCHING ALGORITHM ===
-            float best_error = 999999.0f;
-            int best_class = -1;
-
-            // Compare the recorded input_tensor against every class template
-            for (int c = 0; c < NUM_CLASSES; c++) {
-              float current_error = 0.0f;
-              
-              // Calculate Sum of Absolute Differences (SAD)
-              for (int i = 0; i < TEMPLATE_SIZE; i++) {
-                current_error += abs(input_tensor[i] - GESTURE_TEMPLATES[c][i]);
+            switch (programState) {
+              case RECORDING: {
+                csv_print();
+                break;
               }
 
-              if (current_error < best_error) {
-                best_error = current_error;
-                best_class = c;
+              case AVG_INFERENCE: {
+                gesture_check_avg(
+                  SEQ_LEN, FEATURES, input_tensor,
+                  NUM_CLASSES, TEMPLATE_SIZE, (const float*)GESTURE_TEMPLATES,
+                  MAX_MATCH_ERROR, performMediaAction, printResults);
+                break;
               }
-            }
 
-            Serial.print("Best Match: Class "); 
-            Serial.print(best_class);
-            Serial.print(" | Error Score: ");
-            Serial.println(best_error);
-
-            // Check if the best match is actually close enough, or just random noise
-            if (best_error <= MAX_MATCH_ERROR) {
-              switch (best_class) {
-                case 0: Serial.println("--> TAP"); break;
-                case 1: Serial.println("--> CRANK_RIGHT"); break;
-                case 2: Serial.println("--> CRANK_LEFT"); break;
-                case 3: Serial.println("--> SWIPE_LEFT"); break;
-                case 4: Serial.println("--> SWIPE_RIGHT"); break;
-                case 5: Serial.println("--> CIRCLE_RIGHT"); break;
+              case LSTM_INFERENCE: {
+                gesture_check_lstm(
+                  SEQ_LEN, FEATURES, input_tensor,
+                  NUM_CLASSES, output_tensor,
+                  MEANS, STDS, printResults);
+                break;
               }
-              performMediaAction(best_class);
-            } else {
-              Serial.println("--> UNKNOWN GESTURE (Error too high)");
             }
             
             currentState = STATE_COOLDOWN;
@@ -201,6 +202,17 @@ void loop() {
     }
 
     vTaskDelay(1);
+}
+
+void printResults(int best_class) {
+  switch (best_class) {
+    case 0: Serial.println("--> TAP"); break;
+    case 1: Serial.println("--> CRANK_RIGHT"); break;
+    case 2: Serial.println("--> CRANK_LEFT"); break;
+    case 3: Serial.println("--> SWIPE_LEFT"); break;
+    case 4: Serial.println("--> SWIPE_RIGHT"); break;
+    case 5: Serial.println("--> CIRCLE_RIGHT"); break;
+  }
 }
 
 void performMediaAction(int gestureClass) {
@@ -265,6 +277,35 @@ void typeStringSafely(const char* text) {
     // Give the BLE radio 20ms to transmit the packet and clear the buffer.
     delay(20); 
   }
+}
+
+void csv_print() {
+  // --- TRAINING MODE: Print CSV formats to Serial ---
+  Serial.println("=== START DATA CSV ===");
+  // NOTE: "accleration" is kept misspelled to exactly match Kaggle's CSV headers
+  Serial.println("timestamp,Imu0_linear_accleration_x,Imu0_linear_accleration_y,Imu0_linear_accleration_z,Imu0_angular_velocity_x,Imu0_angular_velocity_y,Imu0_angular_velocity_z");
+  
+  // Calculate a fake starting timestamp so the ms gaps look authentic
+  unsigned long base_time = millis() - (SEQ_LEN * SAMPLE_INTERVAL_MS);
+  
+  for (int i = 0; i < SEQ_LEN; i++) {
+    int idx = i * FEATURES;
+    Serial.print((base_time + (i * SAMPLE_INTERVAL_MS)) / 1000.0, 6); Serial.print(",");
+    Serial.print(input_tensor[idx + 0], 4); Serial.print(",");
+    Serial.print(input_tensor[idx + 1], 4); Serial.print(",");
+    Serial.print(input_tensor[idx + 2], 4); Serial.print(",");
+    Serial.print(input_tensor[idx + 3], 4); Serial.print(",");
+    Serial.print(input_tensor[idx + 4], 4); Serial.print(",");
+    Serial.println(input_tensor[idx + 5], 4);
+  }
+  Serial.println("=== END DATA CSV ===");
+  
+  Serial.println("=== START LABEL CSV ===");
+  Serial.println("label");
+  Serial.println(CURRENT_GESTURE);
+  Serial.println("=== END LABEL CSV ===");
+  
+  Serial.println("Recording complete. Waiting for cooldown...");
 }
 
 bool mooment(float ax, float ay, float az) {

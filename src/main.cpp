@@ -54,7 +54,7 @@ void setup() {
   sample_count = 0;
 
   Serial.begin(115200);
-  while (!Serial);
+  //while (!Serial); // Commented to run without serial monitor
 
   Wire.beginTransmission(LSM6DS3_ADDR);
   Wire.write(0x10);
